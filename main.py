@@ -123,7 +123,7 @@ def create_game():
         validate_input(data, ["team_name", "user_name"])
         game_id = generate_game_id()
         team_name = data["team_name"].strip()
-        user_name = data["user_name"].strip()
+        user_name = data["team_name"].strip()
         
         if not (2 <= len(team_name) <= 20 and 2 <= len(user_name) <= 20):
             raise BadRequest("Team and user names must be 2-20 characters")
@@ -219,7 +219,7 @@ def handle_join(data):
         emit("error", {"message": str(e)})
 
 @socketio.on("start_game")
-def start_game(data):
+def start_game(data=None):  # Make data optional
     try:
         game_id = session.get("game_id")
         user_name = session.get("user_name")
