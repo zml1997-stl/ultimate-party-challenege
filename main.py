@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Gemini API setup
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "your-gemini-api-key-here")
 genai.configure(api_key=GEMINI_API_KEY)
-gemini_client = genai.GenerativeModel("gemini-1.5-flash")  # Use a valid model name
+gemini_client = genai.GenerativeModel("gemini-1.5-flash")  # Adjust model as needed
 
 # Game state storage
 games = {}
@@ -57,7 +57,6 @@ def get_game_or_404(game_id):
 
 # Gemini API integration
 def generate_trivia_question(category):
-    """Generate a trivia question using Gemini."""
     try:
         prompt = f"Generate a trivia question and answer for the category '{category}'. Format as JSON: {{'q': 'question', 'a': 'answer'}}"
         response = gemini_client.generate_content(prompt)
@@ -68,7 +67,6 @@ def generate_trivia_question(category):
         return {"q": f"What is a fact about {category}?", "a": "Ask again later", "category": category}
 
 def generate_pictionary_word(difficulty):
-    """Generate a Pictionary word with Gemini."""
     try:
         prompt = f"Generate a single noun suitable for Pictionary with {difficulty} difficulty."
         response = gemini_client.generate_content(prompt)
@@ -78,7 +76,6 @@ def generate_pictionary_word(difficulty):
         return random.choice(["cat", "house", "tree"])
 
 def generate_pictionary_hint(word):
-    """Generate a hint for a Pictionary word."""
     try:
         prompt = f"Provide a subtle hint for drawing '{word}' in Pictionary without saying the word."
         response = gemini_client.generate_content(prompt)
@@ -88,17 +85,15 @@ def generate_pictionary_hint(word):
         return "Think about its shape."
 
 def validate_scattergories_word(word, category, letter):
-    """Use Gemini to validate Scattergories word."""
     try:
         prompt = f"Is '{word}' a valid entry for the Scattergories category '{category}' starting with '{letter}'? Respond with 'yes' or 'no'."
         response = gemini_client.generate_content(prompt)
         return response.text.strip().lower() == "yes"
     except Exception as e:
         logger.error(f"Gemini Scattergories validation failed: {str(e)}")
-        return word.startswith(letter.lower())  # Fallback to basic check
+        return word.startswith(letter.lower())  # Fallback
 
 def generate_cah_prompt():
-    """Generate a CAH prompt with Gemini."""
     try:
         prompt = "Generate a funny Cards Against Humanity prompt with one blank (___). Keep it party-friendly."
         response = gemini_client.generate_content(prompt)
@@ -108,7 +103,6 @@ def generate_cah_prompt():
         return random.choice(CAH_STATIC_PROMPTS)
 
 def generate_cah_cards(count=5):
-    """Generate CAH cards with Gemini."""
     try:
         prompt = f"Generate {count} funny, party-friendly Cards Against Humanity response cards, one per line."
         response = gemini_client.generate_content(prompt)
@@ -209,12 +203,10 @@ def handle_disconnect():
 @socketio.on("join")
 def handle_join(data):
     try:
-        validate_input(data, ["team"])
-        game_id = session.get("game_id")
-        user_name = session.get("user_name")
+        validate_input(data, ["team", "game_id", "user_name"])
+        game_id = data["game_id"]
+        user_name = data["user_name"]
         team = data["team"]
-        if not game_id or not user_name:
-            raise BadRequest("Session not initialized")
         game = get_game_or_404(game_id)
         if team not in game["teams"]:
             raise BadRequest("Team not found")
@@ -222,6 +214,7 @@ def handle_join(data):
         join_room(game_id)
         users[request.sid] = {"game_id": game_id, "team": team, "name": user_name, "role": "player"}
         emit("update_lobby", {"teams": {k: [p["name"] for p in v] for k, v in game["teams"].items()}}, room=game_id)
+        logger.info(f"{user_name} joined game {game_id} on team {team}")
     except (BadRequest, NotFound) as e:
         emit("error", {"message": str(e)})
 
