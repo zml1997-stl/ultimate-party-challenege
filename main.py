@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Gemini API setup
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "your-gemini-api-key-here")
 genai.configure(api_key=GEMINI_API_KEY)
-gemini_client = genai.GenerativeModel("gemini-1.5-flash")  # Adjust model as needed
+gemini_client = genai.GenerativeModel("gemini-2.0-flash")  # Adjust model as needed
 
 # Game state storage
 games = {}
@@ -51,7 +51,7 @@ def validate_input(data, required_fields):
         raise BadRequest(f"Missing required fields: {', '.join(missing)}")
 
 def get_game_or_404(game_id):
-    if game_id not in games:
+    if not game_id or game_id not in games:
         raise NotFound("Game not found")
     return games[game_id]
 
@@ -188,8 +188,9 @@ def handle_disconnect():
         team = user["team"]
         name = user["name"]
         if game_id in games:
-            team_data = next(t for t in games[game_id]["teams"][team] if t["name"] == name)
-            games[game_id]["teams"][team].remove(team_data)
+            team_data = next((t for t in games[game_id]["teams"][team] if t["name"] == name), None)
+            if team_data:
+                games[game_id]["teams"][team].remove(team_data)
             if not games[game_id]["teams"][team]:
                 del games[game_id]["teams"][team]
             if not games[game_id]["teams"]:
@@ -253,18 +254,20 @@ def start_game(data=None):
 
 # Trivia Events
 @socketio.on("buzz")
-def handle_buzz(data):
+def handle_buzz():
     try:
         game_id = session.get("game_id")
         user_name = session.get("user_name")
+        if not game_id or not user_name:
+            raise BadRequest("Session not initialized")
         game = get_game_or_404(game_id)
         if game["phase"] != "trivia" or game["data"]["buzz"]:
             return
         
         game["data"]["buzz"] = user_name
         emit("buzz_response", {"user": user_name, "message": f"{user_name} buzzed in!"}, room=game_id)
-    except NotFound:
-        emit("error", {"message": "Game not found"})
+    except (BadRequest, NotFound) as e:
+        emit("error", {"message": str(e)})
 
 @socketio.on("trivia_answer")
 def handle_trivia_answer(data):
@@ -272,6 +275,8 @@ def handle_trivia_answer(data):
         validate_input(data, ["answer"])
         game_id = session.get("game_id")
         user_name = session.get("user_name")
+        if not game_id or not user_name:
+            raise BadRequest("Session not initialized")
         game = get_game_or_404(game_id)
         if game["phase"] != "trivia" or game["data"]["buzz"] != user_name:
             raise BadRequest("Not your turn")
@@ -306,6 +311,8 @@ def handle_start_drawing(data):
     try:
         game_id = session.get("game_id")
         user_name = session.get("user_name")
+        if not game_id or not user_name:
+            raise BadRequest("Session not initialized")
         game = get_game_or_404(game_id)
         if game["phase"] != "pictionary" or "drawer" in game["data"]:
             return
@@ -326,14 +333,16 @@ def handle_start_drawing(data):
                 "hint": hint,
                 "time_limit": game["data"]["time_limit"]
             }, room=game_id)
-    except NotFound:
-        emit("error", {"message": "Game not found"})
+    except (BadRequest, NotFound) as e:
+        emit("error", {"message": str(e)})
 
 @socketio.on("drawing")
 def handle_drawing(data):
     try:
         validate_input(data, ["x", "y", "drawing"])
         game_id = session.get("game_id")
+        if not game_id:
+            raise BadRequest("Session not initialized")
         game = get_game_or_404(game_id)
         if game["phase"] != "pictionary" or users[request.sid]["name"] != game["data"]["drawer"]:
             return
@@ -343,8 +352,8 @@ def handle_drawing(data):
             "y": data["y"],
             "drawing": data["drawing"]
         }, room=game_id, skip_sid=request.sid)
-    except NotFound:
-        emit("error", {"message": "Game not found"})
+    except (BadRequest, NotFound) as e:
+        emit("error", {"message": str(e)})
 
 @socketio.on("pictionary_guess")
 def handle_pictionary_guess(data):
@@ -352,6 +361,8 @@ def handle_pictionary_guess(data):
         validate_input(data, ["guess"])
         game_id = session.get("game_id")
         user_name = session.get("user_name")
+        if not game_id or not user_name:
+            raise BadRequest("Session not initialized")
         game = get_game_or_404(game_id)
         if game["phase"] != "pictionary" or user_name == game["data"]["drawer"]:
             return
@@ -372,8 +383,8 @@ def handle_pictionary_guess(data):
             transition_phase(game_id, "scattergories")
         else:
             emit("pictionary_guess", {"user": user_name, "guess": guess}, room=game_id)
-    except NotFound:
-        emit("error", {"message": "Game not found"})
+    except (BadRequest, NotFound) as e:
+        emit("error", {"message": str(e)})
 
 # Scattergories Events
 @socketio.on("scattergories_submit")
@@ -382,6 +393,8 @@ def handle_scattergories_submit(data):
         validate_input(data, ["words"])
         game_id = session.get("game_id")
         user_name = session.get("user_name")
+        if not game_id or not user_name:
+            raise BadRequest("Session not initialized")
         game = get_game_or_404(game_id)
         if game["phase"] != "scattergories":
             return
@@ -393,8 +406,8 @@ def handle_scattergories_submit(data):
         total_players = sum(len(t) for t in game["teams"].values())
         if len(submissions) == total_players:
             score_scattergories(game_id)
-    except NotFound:
-        emit("error", {"message": "Game not found"})
+    except (BadRequest, NotFound) as e:
+        emit("error", {"message": str(e)})
 
 # Cards Against Humanity Events
 @socketio.on("cah_submit")
@@ -403,6 +416,8 @@ def handle_cah_submit(data):
         validate_input(data, ["card"])
         game_id = session.get("game_id")
         user_name = session.get("user_name")
+        if not game_id or not user_name:
+            raise BadRequest("Session not initialized")
         game = get_game_or_404(game_id)
         if game["phase"] != "cah" or user_name == game["data"]["judge"]:
             return
@@ -417,8 +432,8 @@ def handle_cah_submit(data):
                 "prompt": game["data"]["prompt"],
                 "submissions": {k: v for k, v in submissions.items()}
             }, room=game_id)
-    except NotFound:
-        emit("error", {"message": "Game not found"})
+    except (BadRequest, NotFound) as e:
+        emit("error", {"message": str(e)})
 
 @socketio.on("cah_vote")
 def handle_cah_vote(data):
@@ -426,6 +441,8 @@ def handle_cah_vote(data):
         validate_input(data, ["winner"])
         game_id = session.get("game_id")
         user_name = session.get("user_name")
+        if not game_id or not user_name:
+            raise BadRequest("Session not initialized")
         game = get_game_or_404(game_id)
         if game["phase"] != "cah" or user_name != game["data"]["judge"]:
             raise BadRequest("Only the judge can vote")
@@ -447,93 +464,99 @@ def handle_cah_vote(data):
 
 # Game Phase Transitions and Scoring
 def transition_phase(game_id, next_phase):
-    game = get_game_or_404(game_id)
-    game["phase"] = next_phase
-    game["round"] += 1
-    game["data"] = {}
-    
-    if next_phase == "trivia":
-        category = random.choice(TRIVIA_CATEGORIES)
-        question = generate_trivia_question(category)
-        game["data"] = {
-            "question": question,
-            "buzz": None,
-            "answers": {},
-            "time_limit": 30
-        }
-        emit("phase_change", {
-            "phase": "trivia",
-            "question": question["q"],
-            "category": question["category"],
-            "time_limit": game["data"]["time_limit"]
-        }, room=game_id)
-    elif next_phase == "pictionary":
-        game["data"] = {"time_limit": 60}
-        emit("phase_change", {"phase": "pictionary"}, room=game_id)
-    elif next_phase == "scattergories":
-        letter = random.choice(string.ascii_uppercase)
-        game["data"] = {
-            "letter": letter,
-            "categories": [c["category"] for c in SCATTERGORIES_CATEGORIES],
-            "hints": {c["category"]: c["hint"] for c in SCATTERGORIES_CATEGORIES},
-            "submissions": {},
-            "time_limit": 90
-        }
-        emit("phase_change", {
-            "phase": "scattergories",
-            "letter": letter,
-            "categories": game["data"]["categories"],
-            "hints": game["data"]["hints"],
-            "time_limit": game["data"]["time_limit"]
-        }, room=game_id)
-    elif next_phase == "cah":
-        judge_team = list(game["teams"].keys())[game["round"] % len(game["teams"])]
-        judge = random.choice([p["name"] for p in game["teams"][judge_team]])
-        prompt = generate_cah_prompt()
-        cards = generate_cah_cards(7)
-        game["data"] = {
-            "prompt": prompt,
-            "judge": judge,
-            "submissions": {},
-            "cards": cards,
-            "time_limit": 60
-        }
-        emit("phase_change", {
-            "phase": "cah",
-            "prompt": prompt,
-            "judge": judge,
-            "cards": cards,
-            "time_limit": game["data"]["time_limit"]
-        }, room=game_id)
-    logger.info(f"Game {game_id} transitioned to {next_phase}")
+    try:
+        game = get_game_or_404(game_id)
+        game["phase"] = next_phase
+        game["round"] += 1
+        game["data"] = {}
+        
+        if next_phase == "trivia":
+            category = random.choice(TRIVIA_CATEGORIES)
+            question = generate_trivia_question(category)
+            game["data"] = {
+                "question": question,
+                "buzz": None,
+                "answers": {},
+                "time_limit": 30
+            }
+            emit("phase_change", {
+                "phase": "trivia",
+                "question": question["q"],
+                "category": question["category"],
+                "time_limit": game["data"]["time_limit"]
+            }, room=game_id)
+        elif next_phase == "pictionary":
+            game["data"] = {"time_limit": 60}
+            emit("phase_change", {"phase": "pictionary"}, room=game_id)
+        elif next_phase == "scattergories":
+            letter = random.choice(string.ascii_uppercase)
+            game["data"] = {
+                "letter": letter,
+                "categories": [c["category"] for c in SCATTERGORIES_CATEGORIES],
+                "hints": {c["category"]: c["hint"] for c in SCATTERGORIES_CATEGORIES},
+                "submissions": {},
+                "time_limit": 90
+            }
+            emit("phase_change", {
+                "phase": "scattergories",
+                "letter": letter,
+                "categories": game["data"]["categories"],
+                "hints": game["data"]["hints"],
+                "time_limit": game["data"]["time_limit"]
+            }, room=game_id)
+        elif next_phase == "cah":
+            judge_team = list(game["teams"].keys())[game["round"] % len(game["teams"])]
+            judge = random.choice([p["name"] for p in game["teams"][judge_team]])
+            prompt = generate_cah_prompt()
+            cards = generate_cah_cards(7)
+            game["data"] = {
+                "prompt": prompt,
+                "judge": judge,
+                "submissions": {},
+                "cards": cards,
+                "time_limit": 60
+            }
+            emit("phase_change", {
+                "phase": "cah",
+                "prompt": prompt,
+                "judge": judge,
+                "cards": cards,
+                "time_limit": game["data"]["time_limit"]
+            }, room=game_id)
+        logger.info(f"Game {game_id} transitioned to {next_phase}")
+    except NotFound as e:
+        emit("error", {"message": str(e)}, room=game_id)
 
 def score_scattergories(game_id):
-    game = get_game_or_404(game_id)
-    submissions = game["data"]["submissions"]
-    letter = game["data"]["letter"]
-    scores = defaultdict(int)
-    
-    for category_idx, category in enumerate(game["data"]["categories"]):
-        category_words = {}
-        for user, words in submissions.items():
-            word = words[category_idx] if category_idx < len(words) else ""
-            if (word and validate_scattergories_word(word, category, letter) and 
-                word.lower() not in category_words.values() and len(word) > 1):
-                category_words[user] = word.lower()
+    try:
+        game = get_game_or_404(game_id)
+        submissions = game["data"]["submissions"]
+        letter = game["data"]["letter"]
+        scores = defaultdict(int)
         
-        for user, word in category_words.items():
-            team = users[next(sid for sid, u in users.items() if u["name"] == user)]["team"]
-            scores[team] += 5
-    
-    for team in game["teams"]:
-        game["scores"][team] += scores[team]
-    
-    emit("scattergories_result", {
-        "submissions": submissions,
-        "letter": letter,
-        "scores": dict(game["scores"])
-    }, room=game_id)
-    transition_phase(game_id, "cah")
+        for category_idx, category in enumerate(game["data"]["categories"]):
+            category_words = {}
+            for user, words in submissions.items():
+                word = words[category_idx] if category_idx < len(words) else ""
+                if (word and validate_scattergories_word(word, category, letter) and 
+                    word.lower() not in category_words.values() and len(word) > 1):
+                    category_words[user] = word.lower()
+            
+            for user, word in category_words.items():
+                team = users[next(sid for sid, u in users.items() if u["name"] == user)]["team"]
+                scores[team] += 5
+        
+        for team in game["teams"]:
+            game["scores"][team] += scores[team]
+        
+        emit("scattergories_result", {
+            "submissions": submissions,
+            "letter": letter,
+            "scores": dict(game["scores"])
+        }, room=game_id)
+        transition_phase(game_id, "cah")
+    except NotFound as e:
+        emit("error", {"message": str(e)}, room=game_id)
 
 # Error handlers
 @app.errorhandler(404)
