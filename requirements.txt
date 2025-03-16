@@ -1,0 +1,6 @@
+Flask
+Flask-SocketIO
+eventlet  # For WebSocket support on Heroku
+gunicorn  # WSGI server for Heroku
+python-socketio
+Werkzeug
