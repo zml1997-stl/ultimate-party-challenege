@@ -9,82 +9,121 @@ from collections import defaultdict
 from flask import Flask, render_template, request, session, jsonify
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.exceptions import BadRequest, NotFound
+import google.generativeai as genai
 
 # Initialize Flask app
 app = Flask(__name__, template_folder="templates", static_folder="static")
-app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "super-secret-key-12345")  # Use env var in production
-app.config["SESSION_TYPE"] = "filesystem"  # For session persistence
+app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "super-secret-key-12345")
+app.config["SESSION_TYPE"] = "filesystem"
 socketio = SocketIO(app, async_mode="eventlet", logger=True, engineio_logger=True)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-# Game state storage (in-memory; replace with Redis/MongoDB in production)
-games = {}  # {game_id: {"phase": str, "teams": {}, "scores": {}, "data": {}, "start_time": float}}
-users = {}  # {sid: {"game_id": str, "team": str, "name": str, "role": str}}
+# Gemini API setup
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "your-gemini-api-key-here")
+genai.configure(api_key=GEMINI_API_KEY)
+gemini_client = genai.GenerativeModel("gemini-1.5-flash")  # Use a valid model name
 
-# Game data (expand these in production)
-TRIVIA_QUESTIONS = [
-    {"q": "What is the capital of France?", "a": "Paris", "category": "Geography"},
-    {"q": "What gas do plants primarily use for photosynthesis?", "a": "Carbon Dioxide", "category": "Science"},
-    {"q": "Who painted the Mona Lisa?", "a": "Leonardo da Vinci", "category": "Art"},
-    {"q": "What is 2 + 2?", "a": "4", "category": "Math"},
-    {"q": "Which planet is known as the Red Planet?", "a": "Mars", "category": "Space"}
-]
-PICTIONARY_WORDS = [
-    {"word": "cat", "difficulty": "easy"}, {"word": "house", "difficulty": "easy"},
-    {"word": "dragon", "difficulty": "hard"}, {"word": "spaceship", "difficulty": "medium"},
-    {"word": "pizza", "difficulty": "easy"}
-]
+# Game state storage
+games = {}
+users = {}
+
+# Static game data (supplemented by Gemini)
+TRIVIA_CATEGORIES = ["Geography", "Science", "Art", "Math", "Space"]
+PICTIONARY_DIFFICULTIES = ["easy", "medium", "hard"]
 SCATTERGORIES_CATEGORIES = [
     {"category": "Animals", "hint": "Creatures in the wild or at home"},
     {"category": "Foods", "hint": "Things you eat or drink"},
-    {"category": "Cities", "hint": "Places with a mayor"},
-    {"category": "Sports", "hint": "Activities requiring physical skill"},
-    {"category": "Movies", "hint": "Films you watch on screen"}
+    {"category": "Cities", "hint": "Places with a mayor"}
 ]
-CAH_PROMPTS = [
-    "In retrospect, ___ was a terrible idea.",
-    "The secret to ___ is ___.",
-    "Why did I wake up with ___?",
-    "___: the ultimate party foul."
-]
-CAH_CARDS = [
-    "a screaming toddler", "too much coffee", "a rogue clown", "spilled wine",
-    "an alien invasion", "a broken chair", "uncontrollable dancing", "a lost sock",
-    "a bad haircut", "unexpected karaoke"
-]
+CAH_STATIC_PROMPTS = ["In retrospect, ___ was a terrible idea."]
+CAH_STATIC_CARDS = ["a screaming toddler", "too much coffee", "a rogue clown"]
 
 # Utility functions
 def generate_game_id():
-    """Generate a unique 6-character game ID."""
-    while True:
-        game_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
-        if game_id not in games:
-            return game_id
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
 def validate_input(data, required_fields):
-    """Validate incoming data for required fields."""
     missing = [field for field in required_fields if field not in data or not data[field]]
     if missing:
         raise BadRequest(f"Missing required fields: {', '.join(missing)}")
 
 def get_game_or_404(game_id):
-    """Retrieve game state or raise 404."""
     if game_id not in games:
         raise NotFound("Game not found")
     return games[game_id]
 
+# Gemini API integration
+def generate_trivia_question(category):
+    """Generate a trivia question using Gemini."""
+    try:
+        prompt = f"Generate a trivia question and answer for the category '{category}'. Format as JSON: {{'q': 'question', 'a': 'answer'}}"
+        response = gemini_client.generate_content(prompt)
+        data = json.loads(response.text)
+        return {"q": data["q"], "a": data["a"], "category": category}
+    except Exception as e:
+        logger.error(f"Gemini trivia generation failed: {str(e)}")
+        return {"q": f"What is a fact about {category}?", "a": "Ask again later", "category": category}
+
+def generate_pictionary_word(difficulty):
+    """Generate a Pictionary word with Gemini."""
+    try:
+        prompt = f"Generate a single noun suitable for Pictionary with {difficulty} difficulty."
+        response = gemini_client.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        logger.error(f"Gemini Pictionary word generation failed: {str(e)}")
+        return random.choice(["cat", "house", "tree"])
+
+def generate_pictionary_hint(word):
+    """Generate a hint for a Pictionary word."""
+    try:
+        prompt = f"Provide a subtle hint for drawing '{word}' in Pictionary without saying the word."
+        response = gemini_client.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        logger.error(f"Gemini Pictionary hint generation failed: {str(e)}")
+        return "Think about its shape."
+
+def validate_scattergories_word(word, category, letter):
+    """Use Gemini to validate Scattergories word."""
+    try:
+        prompt = f"Is '{word}' a valid entry for the Scattergories category '{category}' starting with '{letter}'? Respond with 'yes' or 'no'."
+        response = gemini_client.generate_content(prompt)
+        return response.text.strip().lower() == "yes"
+    except Exception as e:
+        logger.error(f"Gemini Scattergories validation failed: {str(e)}")
+        return word.startswith(letter.lower())  # Fallback to basic check
+
+def generate_cah_prompt():
+    """Generate a CAH prompt with Gemini."""
+    try:
+        prompt = "Generate a funny Cards Against Humanity prompt with one blank (___). Keep it party-friendly."
+        response = gemini_client.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        logger.error(f"Gemini CAH prompt generation failed: {str(e)}")
+        return random.choice(CAH_STATIC_PROMPTS)
+
+def generate_cah_cards(count=5):
+    """Generate CAH cards with Gemini."""
+    try:
+        prompt = f"Generate {count} funny, party-friendly Cards Against Humanity response cards, one per line."
+        response = gemini_client.generate_content(prompt)
+        return response.text.strip().split("\n")[:count]
+    except Exception as e:
+        logger.error(f"Gemini CAH cards generation failed: {str(e)}")
+        return random.sample(CAH_STATIC_CARDS, min(count, len(CAH_STATIC_CARDS)))
+
 # Routes
 @app.route("/")
 def index():
-    """Render the main game interface."""
     return render_template("index.html")
 
 @app.route("/create_game", methods=["POST"])
 def create_game():
-    """Create a new game instance."""
     try:
         data = request.form
         validate_input(data, ["team_name", "user_name"])
@@ -105,7 +144,7 @@ def create_game():
             "start_time": time.time(),
             "round": 0
         }
-        logger.info(f"Game {game_id} created by {user_name} with team {team_name}")
+        logger.info(f"Game {game_id} created by {user_name}")
         return jsonify({"game_id": game_id, "team": team_name})
     except BadRequest as e:
         return jsonify({"error": str(e)}), 400
@@ -115,7 +154,6 @@ def create_game():
 
 @app.route("/join_game", methods=["POST"])
 def join_game():
-    """Join an existing game."""
     try:
         data = request.form
         validate_input(data, ["game_id", "team_name", "user_name"])
@@ -132,7 +170,7 @@ def join_game():
         session["user_name"] = user_name
         session["game_id"] = game_id
         game["teams"].setdefault(team_name, []).append({"name": user_name, "role": "player"})
-        logger.info(f"{user_name} joined game {game_id} on team {team_name}")
+        logger.info(f"{user_name} joined game {game_id}")
         return jsonify({"game_id": game_id, "team": team_name})
     except (BadRequest, NotFound) as e:
         return jsonify({"error": str(e)}), 400 if isinstance(e, BadRequest) else 404
@@ -143,14 +181,12 @@ def join_game():
 # SocketIO Events
 @socketio.on("connect")
 def handle_connect():
-    """Handle client connection."""
     sid = request.sid
     logger.info(f"Client {sid} connected")
     emit("message", {"data": "Connected to Ultimate Party Challenge!", "timestamp": datetime.now().isoformat()})
 
 @socketio.on("disconnect")
 def handle_disconnect():
-    """Handle client disconnection."""
     sid = request.sid
     if sid in users:
         user = users[sid]
@@ -164,15 +200,14 @@ def handle_disconnect():
                 del games[game_id]["teams"][team]
             if not games[game_id]["teams"]:
                 del games[game_id]
-                logger.info(f"Game {game_id} deleted (no players left)")
+                logger.info(f"Game {game_id} deleted")
             else:
                 emit("update_lobby", {"teams": {k: [p["name"] for p in v] for k, v in games[game_id]["teams"].items()}}, room=game_id)
         del users[sid]
-        logger.info(f"Client {sid} ({name}) disconnected from game {game_id}")
+        logger.info(f"Client {sid} ({name}) disconnected")
 
 @socketio.on("join")
 def handle_join(data):
-    """Join a game room."""
     try:
         validate_input(data, ["team"])
         game_id = session.get("game_id")
@@ -187,13 +222,11 @@ def handle_join(data):
         join_room(game_id)
         users[request.sid] = {"game_id": game_id, "team": team, "name": user_name, "role": "player"}
         emit("update_lobby", {"teams": {k: [p["name"] for p in v] for k, v in game["teams"].items()}}, room=game_id)
-        logger.info(f"{user_name} joined room {game_id}")
     except (BadRequest, NotFound) as e:
         emit("error", {"message": str(e)})
 
 @socketio.on("start_game")
 def start_game(data):
-    """Start the game from lobby."""
     try:
         game_id = session.get("game_id")
         user_name = session.get("user_name")
@@ -201,30 +234,31 @@ def start_game(data):
         if game["phase"] != "lobby":
             raise BadRequest("Game already started")
         if not any(p["name"] == user_name and p["role"] == "leader" for t in game["teams"].values() for p in t):
-            raise BadRequest("Only the leader can start the game")
+            raise BadRequest("Only the leader can start")
         
         game["phase"] = "trivia"
         game["round"] = 1
+        category = random.choice(TRIVIA_CATEGORIES)
+        question = generate_trivia_question(category)
         game["data"] = {
-            "question": random.choice(TRIVIA_QUESTIONS),
+            "question": question,
             "buzz": None,
             "answers": {},
-            "time_limit": 30  # seconds
+            "time_limit": 30
         }
         emit("game_start", {
             "phase": "trivia",
-            "question": game["data"]["question"]["q"],
-            "category": game["data"]["question"]["category"],
+            "question": question["q"],
+            "category": question["category"],
             "time_limit": game["data"]["time_limit"]
         }, room=game_id)
-        logger.info(f"Game {game_id} started by {user_name}")
+        logger.info(f"Game {game_id} started")
     except (BadRequest, NotFound) as e:
         emit("error", {"message": str(e)})
 
 # Trivia Events
 @socketio.on("buzz")
 def handle_buzz(data):
-    """Handle trivia buzz-in."""
     try:
         game_id = session.get("game_id")
         user_name = session.get("user_name")
@@ -234,20 +268,18 @@ def handle_buzz(data):
         
         game["data"]["buzz"] = user_name
         emit("buzz_response", {"user": user_name, "message": f"{user_name} buzzed in!"}, room=game_id)
-        logger.info(f"{user_name} buzzed in game {game_id}")
     except NotFound:
         emit("error", {"message": "Game not found"})
 
 @socketio.on("trivia_answer")
 def handle_trivia_answer(data):
-    """Handle trivia answer submission."""
     try:
         validate_input(data, ["answer"])
         game_id = session.get("game_id")
         user_name = session.get("user_name")
         game = get_game_or_404(game_id)
         if game["phase"] != "trivia" or game["data"]["buzz"] != user_name:
-            raise BadRequest("Not your turn to answer")
+            raise BadRequest("Not your turn")
         
         answer = data["answer"].strip().lower()
         correct_answer = game["data"]["question"]["a"].lower()
@@ -262,7 +294,6 @@ def handle_trivia_answer(data):
                 "answer": answer,
                 "scores": dict(game["scores"])
             }, room=game_id)
-            logger.info(f"{user_name} answered correctly in game {game_id}")
             transition_phase(game_id, "pictionary")
         else:
             emit("trivia_result", {
@@ -270,42 +301,41 @@ def handle_trivia_answer(data):
                 "correct": False,
                 "answer": answer
             }, room=game_id)
-            game["data"]["buzz"] = None  # Allow another buzz
-            logger.info(f"{user_name} answered incorrectly in game {game_id}")
+            game["data"]["buzz"] = None
     except (BadRequest, NotFound) as e:
         emit("error", {"message": str(e)})
 
 # Pictionary Events
 @socketio.on("start_drawing")
 def handle_start_drawing(data):
-    """Assign a drawer and start Pictionary."""
     try:
         game_id = session.get("game_id")
         user_name = session.get("user_name")
         game = get_game_or_404(game_id)
-        if game["phase"] != "pictionary":
+        if game["phase"] != "pictionary" or "drawer" in game["data"]:
             return
-        if "drawer" in game["data"]:
-            raise BadRequest("Drawing already in progress")
         
         team = users[request.sid]["team"]
         if any(p["name"] == user_name for p in game["teams"][team]):
+            difficulty = random.choice(PICTIONARY_DIFFICULTIES)
+            word = generate_pictionary_word(difficulty)
+            hint = generate_pictionary_hint(word)
             game["data"]["drawer"] = user_name
-            game["data"]["word"] = random.choice(PICTIONARY_WORDS)["word"]
+            game["data"]["word"] = word
+            game["data"]["hint"] = hint
             game["data"]["guesses"] = {}
             game["data"]["time_limit"] = 60
             emit("pictionary_start", {
                 "drawer": user_name,
-                "word": game["data"]["word"] if user_name == session["user_name"] else "****",
+                "word": word if user_name == session["user_name"] else "****",
+                "hint": hint,
                 "time_limit": game["data"]["time_limit"]
             }, room=game_id)
-            logger.info(f"{user_name} started drawing in game {game_id}")
-    except (BadRequest, NotFound) as e:
-        emit("error", {"message": str(e)})
+    except NotFound:
+        emit("error", {"message": "Game not found"})
 
 @socketio.on("drawing")
 def handle_drawing(data):
-    """Broadcast drawing coordinates."""
     try:
         validate_input(data, ["x", "y", "drawing"])
         game_id = session.get("game_id")
@@ -323,7 +353,6 @@ def handle_drawing(data):
 
 @socketio.on("pictionary_guess")
 def handle_pictionary_guess(data):
-    """Handle Pictionary guesses."""
     try:
         validate_input(data, ["guess"])
         game_id = session.get("game_id")
@@ -345,7 +374,6 @@ def handle_pictionary_guess(data):
                 "word": word,
                 "scores": dict(game["scores"])
             }, room=game_id)
-            logger.info(f"{user_name} guessed correctly in game {game_id}")
             transition_phase(game_id, "scattergories")
         else:
             emit("pictionary_guess", {"user": user_name, "guess": guess}, room=game_id)
@@ -355,7 +383,6 @@ def handle_pictionary_guess(data):
 # Scattergories Events
 @socketio.on("scattergories_submit")
 def handle_scattergories_submit(data):
-    """Handle Scattergories word submissions."""
     try:
         validate_input(data, ["words"])
         game_id = session.get("game_id")
@@ -371,14 +398,12 @@ def handle_scattergories_submit(data):
         total_players = sum(len(t) for t in game["teams"].values())
         if len(submissions) == total_players:
             score_scattergories(game_id)
-            logger.info(f"All submissions received for Scattergories in game {game_id}")
     except NotFound:
         emit("error", {"message": "Game not found"})
 
 # Cards Against Humanity Events
 @socketio.on("cah_submit")
 def handle_cah_submit(data):
-    """Handle CAH card submissions."""
     try:
         validate_input(data, ["card"])
         game_id = session.get("game_id")
@@ -397,13 +422,11 @@ def handle_cah_submit(data):
                 "prompt": game["data"]["prompt"],
                 "submissions": {k: v for k, v in submissions.items()}
             }, room=game_id)
-            logger.info(f"All CAH submissions received in game {game_id}")
     except NotFound:
         emit("error", {"message": "Game not found"})
 
 @socketio.on("cah_vote")
 def handle_cah_vote(data):
-    """Handle CAH voting."""
     try:
         validate_input(data, ["winner"])
         game_id = session.get("game_id")
@@ -414,7 +437,7 @@ def handle_cah_vote(data):
         
         winner = data["winner"]
         if winner not in game["data"]["submissions"]:
-            raise BadRequest("Invalid winner selected")
+            raise BadRequest("Invalid winner")
         
         team = next(t for t, members in game["teams"].items() if any(p["name"] == winner for p in members))
         game["scores"][team] += 20
@@ -423,30 +446,30 @@ def handle_cah_vote(data):
             "card": game["data"]["submissions"][winner],
             "scores": dict(game["scores"])
         }, room=game_id)
-        logger.info(f"{winner} won CAH round in game {game_id}")
-        transition_phase(game_id, "trivia")  # Loop back
+        transition_phase(game_id, "trivia")
     except (BadRequest, NotFound) as e:
         emit("error", {"message": str(e)})
 
 # Game Phase Transitions and Scoring
 def transition_phase(game_id, next_phase):
-    """Transition to the next game phase."""
     game = get_game_or_404(game_id)
     game["phase"] = next_phase
     game["round"] += 1
     game["data"] = {}
     
     if next_phase == "trivia":
+        category = random.choice(TRIVIA_CATEGORIES)
+        question = generate_trivia_question(category)
         game["data"] = {
-            "question": random.choice(TRIVIA_QUESTIONS),
+            "question": question,
             "buzz": None,
             "answers": {},
             "time_limit": 30
         }
         emit("phase_change", {
             "phase": "trivia",
-            "question": game["data"]["question"]["q"],
-            "category": game["data"]["question"]["category"],
+            "question": question["q"],
+            "category": question["category"],
             "time_limit": game["data"]["time_limit"]
         }, room=game_id)
     elif next_phase == "pictionary":
@@ -471,23 +494,25 @@ def transition_phase(game_id, next_phase):
     elif next_phase == "cah":
         judge_team = list(game["teams"].keys())[game["round"] % len(game["teams"])]
         judge = random.choice([p["name"] for p in game["teams"][judge_team]])
+        prompt = generate_cah_prompt()
+        cards = generate_cah_cards(7)
         game["data"] = {
-            "prompt": random.choice(CAH_PROMPTS),
+            "prompt": prompt,
             "judge": judge,
             "submissions": {},
+            "cards": cards,
             "time_limit": 60
         }
         emit("phase_change", {
             "phase": "cah",
-            "prompt": game["data"]["prompt"],
+            "prompt": prompt,
             "judge": judge,
-            "cards": random.sample(CAH_CARDS, min(7, len(CAH_CARDS))),
+            "cards": cards,
             "time_limit": game["data"]["time_limit"]
         }, room=game_id)
     logger.info(f"Game {game_id} transitioned to {next_phase}")
 
 def score_scattergories(game_id):
-    """Score Scattergories submissions."""
     game = get_game_or_404(game_id)
     submissions = game["data"]["submissions"]
     letter = game["data"]["letter"]
@@ -497,7 +522,7 @@ def score_scattergories(game_id):
         category_words = {}
         for user, words in submissions.items():
             word = words[category_idx] if category_idx < len(words) else ""
-            if (word and word[0].upper() == letter and 
+            if (word and validate_scattergories_word(word, category, letter) and 
                 word.lower() not in category_words.values() and len(word) > 1):
                 category_words[user] = word.lower()
         
