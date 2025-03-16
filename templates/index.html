@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ultimate Party Challenge</title>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Socket.IO Client -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <style>
+        body {
+            background-color: #f8f9fa;
+            font-family: 'Arial', sans-serif;
+        }
+        .game-container {
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 20px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        .scoreboard {
+            margin-top: 20px;
+        }
+        .canvas-container {
+            border: 2px solid #333;
+            background: white;
+            border-radius: 5px;
+        }
+        .hidden {
+            display: none;
+        }
+        .timer {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #dc3545;
+        }
+        .chat-box {
+            height: 200px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin-top: 10px;
+            background: #f1f1f1;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-container">
+        <h1 class="text-center mb-4">Ultimate Party Challenge</h1>
+
+        <!-- Lobby Section -->
+        <div id="lobby" class="phase">
+            <div class="row">
+                <div class="col-md-6">
+                    <h3>Create Game</h3>
+                    <form id="createForm">
+                        <div class="mb-3">
+                            <label for="createUserName" class="form-label">Your Name</label>
+                            <input type="text" class="form-control" id="createUserName" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="createTeamName" class="form-label">Team Name</label>
+                            <input type="text" class="form-control" id="createTeamName" required>
+                        </div>
+                        <button type="submit" class="btn btn-primary">Create Game</button>
+                    </form>
+                </div>
+                <div class="col-md-6">
+                    <h3>Join Game</h3>
+                    <form id="joinForm">
+                        <div class="mb-3">
+                            <label for="joinUserName" class="form-label">Your Name</label>
+                            <input type="text" class="form-control" id="joinUserName" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="joinTeamName" class="form-label">Team Name</label>
+                            <input type="text" class="form-control" id="joinTeamName" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="gameId" class="form-label">Game ID</label>
+                            <input type="text" class="form-control" id="gameId" required>
+                        </div>
+                        <button type="submit" class="btn btn-success">Join Game</button>
+                    </form>
+                </div>
+            </div>
+            <div id="lobbyInfo" class="mt-4 hidden">
+                <h4>Game ID: <span id="gameIdDisplay"></span></h4>
+                <p>Waiting for players...</p>
+                <ul id="teamList" class="list-group"></ul>
+                <button id="startGameBtn" class="btn btn-danger mt-3 hidden">Start Game</button>
+            </div>
+        </div>
+
+        <!-- Trivia Section -->
+        <div id="trivia" class="phase hidden">
+            <h2>Trivia</h2>
+            <p>Category: <span id="triviaCategory"></span></p>
+            <p id="triviaQuestion" class="lead"></p>
+            <div class="timer" id="triviaTimer"></div>
+            <button id="buzzBtn" class="btn btn-warning mt-3">Buzz In!</button>
+            <div id="answerSection" class="mt-3 hidden">
+                <input type="text" id="triviaAnswer" class="form-control" placeholder="Your answer">
+                <button id="submitAnswerBtn" class="btn btn-primary mt-2">Submit Answer</button>
+            </div>
+            <div id="triviaResult" class="mt-3"></div>
+        </div>
+
+        <!-- Pictionary Section -->
+        <div id="pictionary" class="phase hidden">
+            <h2>Pictionary</h2>
+            <p>Drawer: <span id="drawerName"></span></p>
+            <p>Word: <span id="pictionaryWord"></span></p>
+            <div class="timer" id="pictionaryTimer"></div>
+            <div class="canvas-container">
+                <canvas id="drawingCanvas" width="600" height="400"></canvas>
+            </div>
+            <div id="drawingControls" class="mt-2 hidden">
+                <button id="clearCanvas" class="btn btn-secondary">Clear Canvas</button>
+            </div>
+            <div class="mt-3">
+                <input type="text" id="pictionaryGuess" class="form-control" placeholder="Your guess">
+                <button id="submitGuessBtn" class="btn btn-primary mt-2">Submit Guess</button>
+            </div>
+            <div id="guessChat" class="chat-box"></div>
+        </div>
+
+        <!-- Scattergories Section -->
+        <div id="scattergories" class="phase hidden">
+            <h2>Scattergories</h2>
+            <p>Letter: <span id="scatterLetter"></span></p>
+            <div class="timer" id="scatterTimer"></div>
+            <form id="scatterForm">
+                <div id="scatterCategories"></div>
+                <button type="submit" class="btn btn-primary mt-3">Submit Answers</button>
+            </form>
+            <div id="scatterResult" class="mt-3"></div>
+        </div>
+
+        <!-- Cards Against Humanity Section -->
+        <div id="cah" class="phase hidden">
+            <h2>Cards Against Humanity</h2>
+            <p>Judge: <span id="cahJudge"></span></p>
+            <p>Prompt: <span id="cahPrompt"></span></p>
+            <div class="timer" id="cahTimer"></div>
+            <div id="cahCards" class="mt-3"></div>
+            <div id="cahSubmissions" class="mt-3 hidden"></div>
+            <div id="cahResult" class="mt-3"></div>
+        </div>
+
+        <!-- Scoreboard -->
+        <div class="scoreboard">
+            <h3>Scoreboard</h3>
+            <table class="table table-striped" id="scoreTable">
+                <thead>
+                    <tr>
+                        <th>Team</th>
+                        <th>Score</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <!-- Messages -->
+        <div id="messages" class="alert alert-info hidden"></div>
+    </div>
+
+    <!-- Bootstrap JS and Custom Script -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const socket = io();
+        let gameId = null;
+        let userName = null;
+        let teamName = null;
+        let isDrawer = false;
+        let currentPhase = "lobby";
+
+        // Utility functions
+        function showPhase(phase) {
+            document.querySelectorAll(".phase").forEach(p => p.classList.add("hidden"));
+            document.getElementById(phase).classList.remove("hidden");
+            currentPhase = phase;
+        }
+
+        function showMessage(msg) {
+            const messages = document.getElementById("messages");
+            messages.textContent = msg;
+            messages.classList.remove("hidden");
+            setTimeout(() => messages.classList.add("hidden"), 5000);
+        }
+
+        function updateScoreboard(scores) {
+            const tbody = document.querySelector("#scoreTable tbody");
+            tbody.innerHTML = "";
+            for (const [team, score] of Object.entries(scores)) {
+                const row = `<tr><td>${team}</td><td>${score}</td></tr>`;
+                tbody.innerHTML += row;
+            }
+        }
+
+        function startTimer(elementId, seconds, callback) {
+            let timeLeft = seconds;
+            const timer = document.getElementById(elementId);
+            timer.textContent = `Time Left: ${timeLeft}s`;
+            const interval = setInterval(() => {
+                timeLeft--;
+                timer.textContent = `Time Left: ${timeLeft}s`;
+                if (timeLeft <= 0) {
+                    clearInterval(interval);
+                    if (callback) callback();
+                }
+            }, 1000);
+            return interval;
+        }
+
+        // Lobby handling
+        document.getElementById("createForm").addEventListener("submit", e => {
+            e.preventDefault();
+            userName = document.getElementById("createUserName").value.trim();
+            teamName = document.getElementById("createTeamName").value.trim();
+            fetch("/create_game", {
+                method: "POST",
+                body: new URLSearchParams({ user_name: userName, team_name: teamName }),
+                headers: { "Content-Type": "application/x-www-form-urlencoded" }
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.error) throw new Error(data.error);
+                gameId = data.game_id;
+                teamName = data.team;
+                document.getElementById("gameIdDisplay").textContent = gameId;
+                document.getElementById("lobbyInfo").classList.remove("hidden");
+                document.getElementById("startGameBtn").classList.remove("hidden");
+                socket.emit("join", { team: teamName });
+            })
+            .catch(err => showMessage(err.message));
+        });
+
+        document.getElementById("joinForm").addEventListener("submit", e => {
+            e.preventDefault();
+            userName = document.getElementById("joinUserName").value.trim();
+            teamName = document.getElementById("joinTeamName").value.trim();
+            gameId = document.getElementById("gameId").value.trim().toUpperCase();
+            fetch("/join_game", {
+                method: "POST",
+                body: new URLSearchParams({ user_name: userName, team_name: teamName, game_id: gameId }),
+                headers: { "Content-Type": "application/x-www-form-urlencoded" }
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.error) throw new Error(data.error);
+                gameId = data.game_id;
+                teamName = data.team;
+                document.getElementById("gameIdDisplay").textContent = gameId;
+                document.getElementById("lobbyInfo").classList.remove("hidden");
+                socket.emit("join", { team: teamName });
+            })
+            .catch(err => showMessage(err.message));
+        });
+
+        document.getElementById("startGameBtn").addEventListener("click", () => {
+            socket.emit("start_game");
+        });
+
+        socket.on("update_lobby", data => {
+            const teamList = document.getElementById("teamList");
+            teamList.innerHTML = "";
+            for (const [team, players] of Object.entries(data.teams)) {
+                const li = document.createElement("li");
+                li.className = "list-group-item";
+                li.textContent = `${team}: ${players.join(", ")}`;
+                teamList.appendChild(li);
+            }
+        });
+
+        // Game start
+        socket.on("game_start", data => {
+            showPhase("trivia");
+            document.getElementById("triviaQuestion").textContent = data.question;
+            document.getElementById("triviaCategory").textContent = data.category;
+            startTimer("triviaTimer", data.time_limit, () => showMessage("Time's up!"));
+        });
+
+        // Trivia handling
+        document.getElementById("buzzBtn").addEventListener("click", () => {
+            socket.emit("buzz");
+        });
+
+        socket.on("buzz_response", data => {
+            showMessage(data.message);
+            if (data.user === userName) {
+                document.getElementById("buzzBtn").classList.add("hidden");
+                document.getElementById("answerSection").classList.remove("hidden");
+            }
+        });
+
+        document.getElementById("submitAnswerBtn").addEventListener("click", () => {
+            const answer = document.getElementById("triviaAnswer").value.trim();
+            socket.emit("trivia_answer", { answer });
+        });
+
+        socket.on("trivia_result", data => {
+            const result = document.getElementById("triviaResult");
+            result.textContent = `${data.user} answered ${data.correct ? "correctly" : "incorrectly"} with "${data.answer || ""}"`;
+            if (data.scores) updateScoreboard(data.scores);
+            if (!data.correct) {
+                document.getElementById("answerSection").classList.add("hidden");
+                document.getElementById("buzzBtn").classList.remove("hidden");
+            }
+        });
+
+        // Pictionary handling
+        socket.on("phase_change", data => {
+            showPhase(data.phase);
+            if (data.phase === "pictionary") {
+                document.getElementById("pictionaryWord").textContent = "Waiting for drawer...";
+            } else if (data.phase === "scattergories") {
+                document.getElementById("scatterLetter").textContent = data.letter;
+                const categoriesDiv = document.getElementById("scatterCategories");
+                categoriesDiv.innerHTML = "";
+                data.categories.forEach((cat, idx) => {
+                    categoriesDiv.innerHTML += `
+                        <div class="mb-3">
+                            <label class="form-label">${cat} (${data.hints[cat]})</label>
+                            <input type="text" class="form-control" name="word${idx}">
+                        </div>`;
+                });
+                startTimer("scatterTimer", data.time_limit, () => showMessage("Time's up!"));
+            } else if (data.phase === "cah") {
+                document.getElementById("cahPrompt").textContent = data.prompt;
+                document.getElementById("cahJudge").textContent = data.judge;
+                const cardsDiv = document.getElementById("cahCards");
+                cardsDiv.innerHTML = "";
+                if (data.judge !== userName) {
+                    data.cards.forEach(card => {
+                        cardsDiv.innerHTML += `<button class="btn btn-light m-1 cah-card" data-card="${card}">${card}</button>`;
+                    });
+                    document.querySelectorAll(".cah-card").forEach(btn => {
+                        btn.addEventListener("click", () => socket.emit("cah_submit", { card: btn.dataset.card }));
+                    });
+                }
+                startTimer("cahTimer", data.time_limit, () => showMessage("Time's up!"));
+            } else if (data.phase === "trivia") {
+                document.getElementById("triviaQuestion").textContent = data.question;
+                document.getElementById("triviaCategory").textContent = data.category;
+                document.getElementById("buzzBtn").classList.remove("hidden");
+                document.getElementById("answerSection").classList.add("hidden");
+                startTimer("triviaTimer", data.time_limit, () => showMessage("Time's up!"));
+            }
+        });
+
+        socket.on("pictionary_start", data => {
+            document.getElementById("drawerName").textContent = data.drawer;
+            document.getElementById("pictionaryWord").textContent = data.word;
+            isDrawer = data.drawer === userName;
+            document.getElementById("drawingControls").classList.toggle("hidden", !isDrawer);
+            document.getElementById("pictionaryGuess").disabled = isDrawer;
+            document.getElementById("submitGuessBtn").disabled = isDrawer;
+            startTimer("pictionaryTimer", data.time_limit, () => showMessage("Time's up!"));
+            if (isDrawer) initCanvas();
+        });
+
+        const canvas = document.getElementById("drawingCanvas");
+        const ctx = canvas.getContext("2d");
+        let drawing = false;
+
+        function initCanvas() {
+            ctx.lineWidth = 2;
+            ctx.lineCap = "round";
+            ctx.strokeStyle = "#000";
+
+            canvas.addEventListener("mousedown", startDrawing);
+            canvas.addEventListener("mousemove", draw);
+            canvas.addEventListener("mouseup", stopDrawing);
+            canvas.addEventListener("mouseout", stopDrawing);
+        }
+
+        function startDrawing(e) {
+            drawing = true;
+            ctx.beginPath();
+            ctx.moveTo(e.offsetX, e.offsetY);
+        }
+
+        function draw(e) {
+            if (!drawing) return;
+            ctx.lineTo(e.offsetX, e.offsetY);
+            ctx.stroke();
+            socket.emit("drawing", { x: e.offsetX, y: e.offsetY, drawing: true });
+        }
+
+        function stopDrawing() {
+            if (drawing) {
+                drawing = false;
+                ctx.closePath();
+            }
+        }
+
+        document.getElementById("clearCanvas").addEventListener("click", () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            socket.emit("drawing", { x: 0, y: 0, drawing: false });
+        });
+
+        socket.on("drawing_update", data => {
+            if (!isDrawer) {
+                if (data.drawing) {
+                    ctx.lineTo(data.x, data.y);
+                    ctx.stroke();
+                } else {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                }
+            }
+        });
+
+        document.getElementById("submitGuessBtn").addEventListener("click", () => {
+            const guess = document.getElementById("pictionaryGuess").value.trim();
+            socket.emit("pictionary_guess", { guess });
+            document.getElementById("pictionaryGuess").value = "";
+        });
+
+        socket.on("pictionary_guess", data => {
+            const chat = document.getElementById("guessChat");
+            chat.innerHTML += `<p>${data.user}: ${data.guess}</p>`;
+            chat.scrollTop = chat.scrollHeight;
+        });
+
+        socket.on("pictionary_result", data => {
+            showMessage(`${data.user} guessed "${data.word}" correctly!`);
+            if (data.scores) updateScoreboard(data.scores);
+        });
+
+        // Scattergories handling
+        document.getElementById("scatterForm").addEventListener("submit", e => {
+            e.preventDefault();
+            const words = Array.from(document.querySelectorAll("#scatterCategories input")).map(input => input.value);
+            socket.emit("scattergories_submit", { words });
+        });
+
+        socket.on("submission_received", data => {
+            showMessage(`${data.user} submitted their answers`);
+        });
+
+        socket.on("scattergories_result", data => {
+            const result = document.getElementById("scatterResult");
+            result.innerHTML = `<h4>Results (Letter: ${data.letter})</h4>`;
+            for (const [user, words] of Object.entries(data.submissions)) {
+                result.innerHTML += `<p>${user}: ${words.join(", ")}</p>`;
+            }
+            if (data.scores) updateScoreboard(data.scores);
+        });
+
+        // CAH handling
+        socket.on("cah_voting", data => {
+            const submissionsDiv = document.getElementById("cahSubmissions");
+            submissionsDiv.classList.remove("hidden");
+            submissionsDiv.innerHTML = "<h4>Vote for the best:</h4>";
+            for (const [user, card] of Object.entries(data.submissions)) {
+                submissionsDiv.innerHTML += `
+                    <div class="form-check">
+                        <input type="radio" name="vote" value="${user}" class="form-check-input">
+                        <label class="form-check-label">${data.prompt.replace("___", card)}</label>
+                    </div>`;
+            }
+            if (userName === document.getElementById("cahJudge").textContent) {
+                submissionsDiv.innerHTML += `<button id="submitVote" class="btn btn-primary mt-2">Submit Vote</button>`;
+                document.getElementById("submitVote").addEventListener("click", () => {
+                    const winner = document.querySelector("input[name='vote']:checked")?.value;
+                    if (winner) socket.emit("cah_vote", { winner });
+                });
+            }
+            document.getElementById("cahCards").classList.add("hidden");
+        });
+
+        socket.on("cah_result", data => {
+            showMessage(`${data.winner} won with "${data.card}"!`);
+            document.getElementById("cahSubmissions").classList.add("hidden");
+            if (data.scores) updateScoreboard(data.scores);
+        });
+
+        // General socket events
+        socket.on("message", data => showMessage(data.data));
+        socket.on("error", data => showMessage(data.message));
+    </script>
+</body>
+</html>
