@@ -4,3 +4,4 @@ eventlet  # For WebSocket support on Heroku
 gunicorn  # WSGI server for Heroku
 python-socketio
 Werkzeug
+google-generativeai
