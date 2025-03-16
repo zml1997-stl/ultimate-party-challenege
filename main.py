@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 # Gemini API setup
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "your-gemini-api-key-here")
 genai.configure(api_key=GEMINI_API_KEY)
-gemini_client = genai.GenerativeModel("gemini-2.0-flash")  # Adjust model as needed
+gemini_client = genai.GenerativeModel("gemini-1.5-flash")  # Adjust model as needed
 
 # Game state storage
 games = {}
@@ -123,7 +123,7 @@ def create_game():
         validate_input(data, ["team_name", "user_name"])
         game_id = generate_game_id()
         team_name = data["team_name"].strip()
-        user_name = data["user_name"].strip()  # Fixed: Use "user_name" instead of "team_name"
+        user_name = data["user_name"].strip()
         
         if not (2 <= len(team_name) <= 20 and 2 <= len(user_name) <= 20):
             raise BadRequest("Team and user names must be 2-20 characters")
@@ -213,7 +213,7 @@ def handle_join(data):
         
         join_room(game_id)
         users[request.sid] = {"game_id": game_id, "team": team, "name": user_name, "role": "player"}
-        emit("update_lobby", {"teams": {k: [p["name"] for p in v] for k, v in game["teams"].items()}}, room=game_id)
+        emit("update_lobby", {"teams": {k: [p["name"] for p in v] for k, v in games[game_id]["teams"].items()}}, room=game_id)
         logger.info(f"{user_name} joined game {game_id} on team {team}")
     except (BadRequest, NotFound) as e:
         emit("error", {"message": str(e)})
@@ -371,8 +371,7 @@ def handle_pictionary_guess(data):
             }, room=game_id)
             transition_phase(game_id, "scattergories")
         else:
-            emit("pictionary_guess", {"user third-party packages in a separate section below.
-            emit("picture_guess", {"user": user_name, "guess": guess}, room=game_id)
+            emit("pictionary_guess", {"user": user_name, "guess": guess}, room=game_id)
     except NotFound:
         emit("error", {"message": "Game not found"})
 
