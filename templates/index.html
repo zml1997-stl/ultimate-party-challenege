@@ -276,7 +276,7 @@
         });
 
         document.getElementById("startGameBtn").addEventListener("click", () => {
-            socket.emit("start_game");
+            socket.emit("start_game", { game_id: gameId });
         });
 
         socket.on("update_lobby", data => {
