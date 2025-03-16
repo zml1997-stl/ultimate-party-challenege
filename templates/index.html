@@ -45,6 +45,10 @@
             margin-top: 10px;
             background: #f1f1f1;
         }
+        .cah-card:hover {
+            background-color: #e9ecef;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -59,11 +63,11 @@
                     <form id="createForm">
                         <div class="mb-3">
                             <label for="createUserName" class="form-label">Your Name</label>
-                            <input type="text" class="form-control" id="createUserName" required>
+                            <input type="text" class="form-control" id="createUserName" required maxlength="20">
                         </div>
                         <div class="mb-3">
                             <label for="createTeamName" class="form-label">Team Name</label>
-                            <input type="text" class="form-control" id="createTeamName" required>
+                            <input type="text" class="form-control" id="createTeamName" required maxlength="20">
                         </div>
                         <button type="submit" class="btn btn-primary">Create Game</button>
                     </form>
@@ -73,15 +77,15 @@
                     <form id="joinForm">
                         <div class="mb-3">
                             <label for="joinUserName" class="form-label">Your Name</label>
-                            <input type="text" class="form-control" id="joinUserName" required>
+                            <input type="text" class="form-control" id="joinUserName" required maxlength="20">
                         </div>
                         <div class="mb-3">
                             <label for="joinTeamName" class="form-label">Team Name</label>
-                            <input type="text" class="form-control" id="joinTeamName" required>
+                            <input type="text" class="form-control" id="joinTeamName" required maxlength="20">
                         </div>
                         <div class="mb-3">
                             <label for="gameId" class="form-label">Game ID</label>
-                            <input type="text" class="form-control" id="gameId" required>
+                            <input type="text" class="form-control" id="gameId" required maxlength="6">
                         </div>
                         <button type="submit" class="btn btn-success">Join Game</button>
                     </form>
@@ -114,6 +118,7 @@
             <h2>Pictionary</h2>
             <p>Drawer: <span id="drawerName"></span></p>
             <p>Word: <span id="pictionaryWord"></span></p>
+            <p>Hint: <span id="pictionaryHint"></span></p>
             <div class="timer" id="pictionaryTimer"></div>
             <div class="canvas-container">
                 <canvas id="drawingCanvas" width="600" height="400"></canvas>
@@ -222,6 +227,10 @@
             e.preventDefault();
             userName = document.getElementById("createUserName").value.trim();
             teamName = document.getElementById("createTeamName").value.trim();
+            if (userName.length < 2 || teamName.length < 2) {
+                showMessage("Names must be at least 2 characters");
+                return;
+            }
             fetch("/create_game", {
                 method: "POST",
                 body: new URLSearchParams({ user_name: userName, team_name: teamName }),
@@ -245,6 +254,10 @@
             userName = document.getElementById("joinUserName").value.trim();
             teamName = document.getElementById("joinTeamName").value.trim();
             gameId = document.getElementById("gameId").value.trim().toUpperCase();
+            if (userName.length < 2 || teamName.length < 2 || gameId.length !== 6) {
+                showMessage("Invalid input: Names 2+ chars, Game ID 6 chars");
+                return;
+            }
             fetch("/join_game", {
                 method: "POST",
                 body: new URLSearchParams({ user_name: userName, team_name: teamName, game_id: gameId }),
@@ -300,7 +313,10 @@
 
         document.getElementById("submitAnswerBtn").addEventListener("click", () => {
             const answer = document.getElementById("triviaAnswer").value.trim();
-            socket.emit("trivia_answer", { answer });
+            if (answer) {
+                socket.emit("trivia_answer", { answer });
+                document.getElementById("triviaAnswer").value = "";
+            }
         });
 
         socket.on("trivia_result", data => {
@@ -313,11 +329,12 @@
             }
         });
 
-        // Pictionary handling
+        // Phase transitions
         socket.on("phase_change", data => {
             showPhase(data.phase);
             if (data.phase === "pictionary") {
                 document.getElementById("pictionaryWord").textContent = "Waiting for drawer...";
+                document.getElementById("pictionaryHint").textContent = "";
             } else if (data.phase === "scattergories") {
                 document.getElementById("scatterLetter").textContent = data.letter;
                 const categoriesDiv = document.getElementById("scatterCategories");
@@ -340,8 +357,13 @@
                         cardsDiv.innerHTML += `<button class="btn btn-light m-1 cah-card" data-card="${card}">${card}</button>`;
                     });
                     document.querySelectorAll(".cah-card").forEach(btn => {
-                        btn.addEventListener("click", () => socket.emit("cah_submit", { card: btn.dataset.card }));
+                        btn.addEventListener("click", () => {
+                            socket.emit("cah_submit", { card: btn.dataset.card });
+                            btn.disabled = true;
+                        });
                     });
+                } else {
+                    cardsDiv.innerHTML = "<p>You are the judge this round.</p>";
                 }
                 startTimer("cahTimer", data.time_limit, () => showMessage("Time's up!"));
             } else if (data.phase === "trivia") {
@@ -349,17 +371,21 @@
                 document.getElementById("triviaCategory").textContent = data.category;
                 document.getElementById("buzzBtn").classList.remove("hidden");
                 document.getElementById("answerSection").classList.add("hidden");
+                document.getElementById("triviaResult").textContent = "";
                 startTimer("triviaTimer", data.time_limit, () => showMessage("Time's up!"));
             }
         });
 
+        // Pictionary handling
         socket.on("pictionary_start", data => {
             document.getElementById("drawerName").textContent = data.drawer;
             document.getElementById("pictionaryWord").textContent = data.word;
+            document.getElementById("pictionaryHint").textContent = data.hint;
             isDrawer = data.drawer === userName;
             document.getElementById("drawingControls").classList.toggle("hidden", !isDrawer);
             document.getElementById("pictionaryGuess").disabled = isDrawer;
             document.getElementById("submitGuessBtn").disabled = isDrawer;
+            document.getElementById("guessChat").innerHTML = "";
             startTimer("pictionaryTimer", data.time_limit, () => showMessage("Time's up!"));
             if (isDrawer) initCanvas();
         });
@@ -377,6 +403,18 @@
             canvas.addEventListener("mousemove", draw);
             canvas.addEventListener("mouseup", stopDrawing);
             canvas.addEventListener("mouseout", stopDrawing);
+
+            canvas.addEventListener("touchstart", e => {
+                e.preventDefault();
+                const touch = e.touches[0];
+                startDrawing({ offsetX: touch.clientX - canvas.offsetLeft, offsetY: touch.clientY - canvas.offsetTop });
+            });
+            canvas.addEventListener("touchmove", e => {
+                e.preventDefault();
+                const touch = e.touches[0];
+                draw({ offsetX: touch.clientX - canvas.offsetLeft, offsetY: touch.clientY - canvas.offsetTop });
+            });
+            canvas.addEventListener("touchend", stopDrawing);
         }
 
         function startDrawing(e) {
@@ -417,8 +455,10 @@
 
         document.getElementById("submitGuessBtn").addEventListener("click", () => {
             const guess = document.getElementById("pictionaryGuess").value.trim();
-            socket.emit("pictionary_guess", { guess });
-            document.getElementById("pictionaryGuess").value = "";
+            if (guess) {
+                socket.emit("pictionary_guess", { guess });
+                document.getElementById("pictionaryGuess").value = "";
+            }
         });
 
         socket.on("pictionary_guess", data => {
@@ -435,7 +475,7 @@
         // Scattergories handling
         document.getElementById("scatterForm").addEventListener("submit", e => {
             e.preventDefault();
-            const words = Array.from(document.querySelectorAll("#scatterCategories input")).map(input => input.value);
+            const words = Array.from(document.querySelectorAll("#scatterCategories input")).map(input => input.value.trim());
             socket.emit("scattergories_submit", { words });
         });
 
